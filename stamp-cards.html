@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>スタンプカード</title>
+  <!-- PWA: ホーム画面に追加したときフルスクリーンで開く -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="スタンプカード" />
+  <meta name="theme-color" content="#f5f0fa" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f5f0fa; font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif; }
+    /* iPhoneのセーフエリア対応 */
+    #root { padding-bottom: env(safe-area-inset-bottom); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+
+  <script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ─── Storage: localStorage を使用 ─────────────────────────────────────────────
+const STORAGE_KEY = "stamp_cards_v1";
+const load = () => {
+  try { const v = localStorage.getItem(STORAGE_KEY); return v ? JSON.parse(v) : []; }
+  catch { return []; }
+};
+const save = (cards) => {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)); } catch {}
+};
+
+// ─── Design tokens ─────────────────────────────────────────────────────────────
+const C = {
+  bg:      "#f5f0fa",
+  surface: "#ffffff",
+  border:  "#e2d9f0",
+  text:    "#3d3550",
+  muted:   "#9b8eb0",
+  faint:   "#ede8f7",
+};
+
+const TYPES = {
+  habit:    { label: "習慣",        color: "#7b8ff7", light: "#eef0ff", emoji: "🗓️" },
+  deadline: { label: "期限付き進捗", color: "#ff8c00", light: "#fff3e0", emoji: "📋" },
+  consume:  { label: "消化",        color: "#27c96a", light: "#e6faf0", emoji: "🎬" },
+};
+
+const MONTHS_JP = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+const today = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; };
+const uid = () => Math.random().toString(36).slice(2);
+const getDaysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+
+// ─── Stamp ─────────────────────────────────────────────────────────────────────
+function Stamp({ filled, bonus, color, onClick }) {
+  const [pop, setPop] = useState(false);
+  const handle = () => { setPop(true); setTimeout(() => setPop(false), 280); onClick(); };
+  const bg   = filled ? color : bonus ? color + "22" : C.faint;
+  const bdr  = bonus  ? `2px dashed ${color}66` : `2px solid ${filled ? color : C.border}`;
+  const txtC = filled ? "#fff" : bonus ? color : C.border;
+  return (
+    <div onClick={handle} style={{
+      width:34, height:34, borderRadius:"50%", background:bg, border:bdr,
+      display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+      transform: pop ? "scale(1.45)" : "scale(1)",
+      transition:"transform 0.15s cubic-bezier(.36,1.8,.5,1), background 0.15s",
+      fontSize:13, color:txtC, userSelect:"none", flexShrink:0,
+    }}>
+      {filled ? "✦" : bonus ? "＋" : ""}
+    </div>
+  );
+}
+
+// ─── Card shell ────────────────────────────────────────────────────────────────
+function CardShell({ card, children, onDelete, accent }) {
+  const [confirm, setConfirm] = useState(false);
+  const t = TYPES[card.type];
+  return (
+    <div style={{
+      background:C.surface, border:`1.5px solid ${C.border}`,
+      borderTop:`3px solid ${accent}`, borderRadius:14,
+      padding:"14px 16px", boxShadow:"0 2px 8px #0000000a",
+    }}>
+      <div style={{ display:"flex", alignItems:"center", marginBottom:10, gap:7 }}>
+        <span style={{ fontSize:17 }}>{t.emoji}</span>
+        <span style={{ fontWeight:700, color:C.text, fontSize:15, flex:1 }}>{card.name}</span>
+        <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:t.light, color:accent, fontWeight:600 }}>{t.label}</span>
+        {!confirm
+          ? <button onClick={() => setConfirm(true)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+          : <span style={{ fontSize:11, display:"flex", gap:4 }}>
+              <button onClick={onDelete} style={{ background:"#ffe4e4", color:"#e05252", border:"none", borderRadius:6, padding:"2px 7px", cursor:"pointer" }}>削除</button>
+              <button onClick={() => setConfirm(false)} style={{ background:C.faint, color:C.muted, border:"none", borderRadius:6, padding:"2px 7px", cursor:"pointer" }}>戻る</button>
+            </span>
+        }
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ─── Habit card ────────────────────────────────────────────────────────────────
+function HabitCard({ card, onUpdate, onDelete }) {
+  const { y, m } = today();
+  const key = `${y}-${m}`;
+  const months = card.months || {};
+  const cur = months[key] || { checked: [] };
+  const goal = card.goal || 10;
+  const slots = Math.max(getDaysInMonth(y, m), cur.checked.length);
+  const ac = TYPES.habit.color;
+
+  function toggle(i) {
+    const arr = [...(cur.checked)];
+    arr[i] = arr[i] ? 0 : 1;
+    while (arr.length && !arr[arr.length - 1]) arr.pop();
+    onUpdate({ ...card, months: { ...months, [key]: { checked: arr } } });
+  }
+
+  const done = cur.checked.filter(Boolean).length;
+  const pct  = Math.min(100, Math.round(done / goal * 100));
+  const pastKeys = Object.keys(months).filter(k => k !== key).sort().reverse().slice(0, 3);
+
+  return (
+    <CardShell card={card} onDelete={onDelete} accent={ac}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+        <span style={{ color:C.muted, fontSize:12 }}>{y}年 {MONTHS_JP[m]} ／ 目標 {goal}回</span>
+        <span style={{ color:ac, fontWeight:700, fontSize:13 }}>{done} / {goal} 回 {done >= goal ? "🎉" : ""}</span>
+      </div>
+      <div style={{ height:4, background:C.faint, borderRadius:2, marginBottom:10 }}>
+        <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:2, transition:"width 0.3s" }} />
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+        {Array.from({ length: slots }, (_, i) => (
+          <Stamp key={i} filled={!!cur.checked[i]} bonus={i >= goal} color={ac} onClick={() => toggle(i)} />
+        ))}
+        <div onClick={() => toggle(slots)} style={{
+          width:34, height:34, borderRadius:"50%", border:`2px dashed ${C.border}`,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          cursor:"pointer", color:C.muted, fontSize:18, flexShrink:0,
+        }}>+</div>
+      </div>
+      {pastKeys.length > 0 && (
+        <div style={{ marginTop:10, borderTop:`1px solid ${C.border}`, paddingTop:8 }}>
+          <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>過去の記録</div>
+          {pastKeys.map(k => {
+            const [py, pm] = k.split("-").map(Number);
+            const d = (months[k].checked || []).filter(Boolean).length;
+            const g = card.goal || 10;
+            return (
+              <div key={k} style={{ fontSize:11, display:"flex", justifyContent:"space-between", color:C.muted }}>
+                <span>{py}年 {MONTHS_JP[pm]}</span>
+                <span style={{ color: d >= g ? ac : C.muted }}>{d}/{g}回{d >= g ? " ✦" : ""}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </CardShell>
+  );
+}
+
+// ─── Deadline card ─────────────────────────────────────────────────────────────
+function DeadlineCard({ card, onUpdate, onDelete }) {
+  const total = card.total || 10;
+  const done  = card.done  || 0;
+  const pct   = Math.round(done / total * 100);
+  const ac    = TYPES.deadline.color;
+  const deadlineStr = card.deadline ? new Date(card.deadline).toLocaleDateString("ja-JP") : "—";
+  const daysLeft = card.deadline ? Math.ceil((new Date(card.deadline) - new Date()) / 86400000) : null;
+
+  function toggle(i) { onUpdate({ ...card, done: i < done ? i : i + 1 }); }
+
+  return (
+    <CardShell card={card} onDelete={onDelete} accent={ac}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+        <span style={{ color:C.muted, fontSize:12 }}>期限: {deadlineStr}</span>
+        <span style={{ color: daysLeft != null && daysLeft < 7 ? "#e05252" : C.muted, fontSize:12 }}>
+          {daysLeft != null ? (daysLeft >= 0 ? `残${daysLeft}日` : "⚠ 期限超過") : ""}
+        </span>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+        <span style={{ color:ac, fontWeight:700 }}>{pct}%</span>
+        <span style={{ color:C.muted, fontSize:12 }}>{done} / {total}</span>
+      </div>
+      <div style={{ height:5, background:C.faint, borderRadius:3, marginBottom:10 }}>
+        <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:3, transition:"width 0.3s" }} />
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+        {Array.from({ length: total }, (_, i) => (
+          <Stamp key={i} filled={i < done} color={ac} onClick={() => toggle(i)} />
+        ))}
+      </div>
+      {done >= total && <div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 完了！</div>}
+    </CardShell>
+  );
+}
+
+// ─── Consume card ──────────────────────────────────────────────────────────────
+function ConsumeCard({ card, onUpdate, onDelete }) {
+  const total = card.total || 12;
+  const done  = card.done  || 0;
+  const pct   = Math.round(done / total * 100);
+  const ac    = TYPES.consume.color;
+
+  function toggle(i) { onUpdate({ ...card, done: i < done ? i : i + 1 }); }
+
+  return (
+    <CardShell card={card} onDelete={onDelete} accent={ac}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+        <span style={{ color:ac, fontWeight:700 }}>{done} / {total} 話</span>
+        <span style={{ color:C.muted, fontSize:12 }}>{pct}%</span>
+      </div>
+      <div style={{ height:4, background:C.faint, borderRadius:2, marginBottom:10 }}>
+        <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:2, transition:"width 0.3s" }} />
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+        {Array.from({ length: total }, (_, i) => (
+          <Stamp key={i} filled={i < done} color={ac} onClick={() => toggle(i)} />
+        ))}
+      </div>
+      {done >= total && <div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 全話視聴完了！</div>}
+    </CardShell>
+  );
+}
+
+// ─── New card form ─────────────────────────────────────────────────────────────
+function NewCardForm({ onAdd, onClose }) {
+  const [type, setType] = useState("habit");
+  const [name, setName] = useState("");
+  const [goal, setGoal] = useState(10);
+  const [total, setTotal] = useState(44);
+  const [deadline, setDeadline] = useState("");
+
+  function submit() {
+    if (!name.trim()) return;
+    const base = { id: uid(), type, name: name.trim(), createdAt: Date.now() };
+    if (type === "habit") onAdd({ ...base, goal: Number(goal), months: {} });
+    else if (type === "deadline") onAdd({ ...base, total: Number(total), done: 0, deadline });
+    else onAdd({ ...base, total: Number(total), done: 0 });
+    onClose();
+  }
+
+  const inp = {
+    background:C.faint, border:`1px solid ${C.border}`, borderRadius:8,
+    color:C.text, padding:"7px 10px", fontSize:13, width:"100%",
+  };
+
+  return (
+    <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"18px 16px", boxShadow:"0 2px 8px #0000000a" }}>
+      <div style={{ fontWeight:700, color:C.text, marginBottom:12 }}>新しいカードを追加</div>
+      <div style={{ display:"flex", gap:6, marginBottom:12 }}>
+        {Object.entries(TYPES).map(([k, v]) => (
+          <button key={k} onClick={() => setType(k)} style={{
+            flex:1, padding:"7px 4px", borderRadius:8, fontSize:11, fontWeight:600,
+            border:`1.5px solid ${type === k ? v.color : C.border}`,
+            background: type === k ? v.light : C.faint,
+            color: type === k ? v.color : C.muted, cursor:"pointer",
+          }}>{v.emoji} {v.label}</button>
+        ))}
+      </div>
+      <input style={{ ...inp, marginBottom:10 }} placeholder="カード名（例：英語単語）" value={name} onChange={e => setName(e.target.value)} />
+      {type === "habit" && (
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+          <label style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>月目標回数</label>
+          <input type="number" min={1} max={31} style={inp} value={goal} onChange={e => setGoal(e.target.value)} />
+        </div>
+      )}
+      {(type === "deadline" || type === "consume") && (
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+          <label style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>総数</label>
+          <input type="number" min={1} style={inp} value={total} onChange={e => setTotal(e.target.value)} />
+        </div>
+      )}
+      {type === "deadline" && (
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+          <label style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>期限</label>
+          <input type="date" style={inp} value={deadline} onChange={e => setDeadline(e.target.value)} />
+        </div>
+      )}
+      <div style={{ display:"flex", gap:8, marginTop:4 }}>
+        <button onClick={submit} style={{
+          flex:1, padding:"9px", borderRadius:8, border:"none",
+          background:TYPES[type].color, color:"#fff", fontWeight:700, cursor:"pointer", fontSize:13,
+        }}>追加</button>
+        <button onClick={onClose} style={{
+          padding:"9px 14px", borderRadius:8, border:`1px solid ${C.border}`,
+          background:C.faint, color:C.muted, cursor:"pointer", fontSize:13,
+        }}>キャンセル</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tabs ──────────────────────────────────────────────────────────────────────
+function Tabs({ active, onChange }) {
+  const opts = [
+    { k:"all",      label:"すべて" },
+    { k:"active",   label:"進行中" },
+    { k:"done",     label:"完了済み" },
+    { k:"habit",    label:TYPES.habit.emoji    + " 習慣" },
+    { k:"deadline", label:TYPES.deadline.emoji + " 期限" },
+    { k:"consume",  label:TYPES.consume.emoji  + " 消化" },
+  ];
+  return (
+    <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+      {opts.map(o => (
+        <button key={o.k} onClick={() => onChange(o.k)} style={{
+          padding:"5px 12px", borderRadius:99, fontSize:11, fontWeight:600,
+          border:`1.5px solid ${active === o.k ? (TYPES[o.k]?.color || "#7b8ff7") : C.border}`,
+          background: active === o.k ? (TYPES[o.k]?.light || "#eef0ff") : C.surface,
+          color: active === o.k ? (TYPES[o.k]?.color || "#7b8ff7") : C.muted,
+          cursor:"pointer",
+        }}>{o.label}</button>
+      ))}
+    </div>
+  );
+}
+
+const isCardDone = card => card.type !== "habit" && (card.done || 0) >= (card.total || 1);
+
+// ─── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  const [cards, setCards] = useState(() => load());
+  const [adding, setAdding] = useState(false);
+  const [tab, setTab] = useState("all");
+
+  useEffect(() => { save(cards); }, [cards]);
+
+  const addCard    = useCallback(c => setCards(prev => [c, ...prev]), []);
+  const updateCard = useCallback(c => setCards(prev => prev.map(x => x.id === c.id ? c : x)), []);
+  const deleteCard = useCallback(id => setCards(prev => prev.filter(x => x.id !== id)), []);
+
+  const filtered = cards.filter(c => {
+    if (tab === "active")   return !isCardDone(c);
+    if (tab === "done")     return  isCardDone(c);
+    if (["habit","deadline","consume"].includes(tab)) return c.type === tab;
+    return true;
+  });
+  const sorted = [...filtered].sort((a, b) => {
+    const da = isCardDone(a), db = isCardDone(b);
+    if (da !== db) return da ? 1 : -1;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+
+  return (
+    <div style={{
+      minHeight:"100vh",
+      background:`linear-gradient(160deg, ${C.bg} 0%, #ece6f8 100%)`,
+      fontFamily:"'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif",
+      color:C.text, padding:"20px 16px 80px", maxWidth:500, margin:"0 auto",
+    }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:800, letterSpacing:"-0.5px", color:C.text }}>✦ スタンプカード</div>
+          <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>
+            {cards.filter(c => !isCardDone(c)).length} 件進行中 · 全{cards.length}件
+          </div>
+        </div>
+        <button onClick={() => setAdding(v => !v)} style={{
+          background: adding ? C.faint : "#7b8ff7",
+          border:`1.5px solid ${adding ? C.border : "#7b8ff7"}`,
+          borderRadius:99, color: adding ? C.muted : "#fff",
+          fontWeight:700, fontSize:22, width:42, height:42, cursor:"pointer",
+          display:"flex", alignItems:"center", justifyContent:"center",
+        }}>{adding ? "×" : "+"}</button>
+      </div>
+
+      {adding && <div style={{ marginBottom:14 }}><NewCardForm onAdd={addCard} onClose={() => setAdding(false)} /></div>}
+
+      <Tabs active={tab} onChange={setTab} />
+
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {sorted.length === 0 && (
+          <div style={{ textAlign:"center", color:C.muted, padding:"40px 0", fontSize:13 }}>
+            {tab === "all" ? "＋ ボタンでカードを追加してください" : "該当するカードがありません"}
+          </div>
+        )}
+        {sorted.map(card => {
+          const props = { key:card.id, card, onUpdate:updateCard, onDelete:() => deleteCard(card.id) };
+          if (card.type === "habit")    return <HabitCard    {...props} />;
+          if (card.type === "deadline") return <DeadlineCard {...props} />;
+          return <ConsumeCard {...props} />;
+        })}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
