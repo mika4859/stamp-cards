@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>スタンプカード</title>
-  <!-- PWA: ホーム画面に追加したときフルスクリーンで開く -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="スタンプカード" />
@@ -12,67 +11,77 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #f5f0fa; font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif; }
-    /* iPhoneのセーフエリア対応 */
     #root { padding-bottom: env(safe-area-inset-bottom); }
   </style>
 </head>
 <body>
   <div id="root"></div>
-
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-
   <script type="text/babel">
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useMemo } = React;
 
-// ─── Storage: localStorage を使用 ─────────────────────────────────────────────
 const STORAGE_KEY = "stamp_cards_v1";
-const load = () => {
-  try { const v = localStorage.getItem(STORAGE_KEY); return v ? JSON.parse(v) : []; }
-  catch { return []; }
-};
-const save = (cards) => {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)); } catch {}
-};
+const load = () => { try { const v = localStorage.getItem(STORAGE_KEY); return v ? JSON.parse(v) : []; } catch { return []; } };
+const save = (cards) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cards)); } catch {} };
 
-// ─── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
-  bg:      "#f5f0fa",
-  surface: "#ffffff",
-  border:  "#e2d9f0",
-  text:    "#3d3550",
-  muted:   "#9b8eb0",
-  faint:   "#ede8f7",
+  bg:"#f5f0fa", surface:"#ffffff", border:"#e2d9f0",
+  text:"#3d3550", muted:"#9b8eb0", faint:"#ede8f7",
 };
 
 const TYPES = {
-  habit:    { label: "習慣",        color: "#7b8ff7", light: "#eef0ff", emoji: "🗓️" },
-  deadline: { label: "期限付き進捗", color: "#ff8c00", light: "#fff3e0", emoji: "📋" },
-  consume:  { label: "消化",        color: "#27c96a", light: "#e6faf0", emoji: "🎬" },
+  habit:    { label:"習慣",        color:"#7b8ff7", light:"#eef0ff", emoji:"🗓️" },
+  deadline: { label:"期限付き進捗", color:"#ff8c00", light:"#fff3e0", emoji:"📋" },
+  consume:  { label:"消化",        color:"#27c96a", light:"#e6faf0", emoji:"🎬" },
+  chapters: { label:"章立て進捗",  color:"#e05fa0", light:"#ffeef7", emoji:"📚" },
+  routine:  { label:"毎日ルーティン", color:"#00b8a9", light:"#e0f7f5", emoji:"✅" },
 };
 
 const MONTHS_JP = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
-const today = () => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; };
+const DAYS_JP   = ["日","月","火","水","木","金","土"];
+const todayObj  = () => { const d = new Date(); return { y:d.getFullYear(), m:d.getMonth(), d:d.getDate() }; };
+const todayKey  = () => { const {y,m,d} = todayObj(); return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; };
 const uid = () => Math.random().toString(36).slice(2);
-const getDaysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+const getDaysInMonth = (y, m) => new Date(y, m+1, 0).getDate();
 
 // ─── Stamp ─────────────────────────────────────────────────────────────────────
 function Stamp({ filled, bonus, color, onClick }) {
   const [pop, setPop] = useState(false);
-  const handle = () => { setPop(true); setTimeout(() => setPop(false), 280); onClick(); };
-  const bg   = filled ? color : bonus ? color + "22" : C.faint;
-  const bdr  = bonus  ? `2px dashed ${color}66` : `2px solid ${filled ? color : C.border}`;
-  const txtC = filled ? "#fff" : bonus ? color : C.border;
+  const handle = () => { setPop(true); setTimeout(()=>setPop(false),280); onClick(); };
+  const bg  = filled ? color : bonus ? color+"22" : C.faint;
+  const bdr = bonus  ? `2px dashed ${color}66` : `2px solid ${filled ? color : C.border}`;
   return (
     <div onClick={handle} style={{
       width:34, height:34, borderRadius:"50%", background:bg, border:bdr,
       display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
-      transform: pop ? "scale(1.45)" : "scale(1)",
+      transform: pop?"scale(1.45)":"scale(1)",
       transition:"transform 0.15s cubic-bezier(.36,1.8,.5,1), background 0.15s",
-      fontSize:13, color:txtC, userSelect:"none", flexShrink:0,
+      fontSize:13, color: filled?"#fff":bonus?color:C.border, userSelect:"none", flexShrink:0,
     }}>
-      {filled ? "✦" : bonus ? "＋" : ""}
+      {filled?"✦":bonus?"＋":""}
+    </div>
+  );
+}
+
+// ─── Chapter stamp ─────────────────────────────────────────────────────────────
+function ChapterStamp({ label, filled, color, onClick }) {
+  const [pop, setPop] = useState(false);
+  const handle = () => { setPop(true); setTimeout(()=>setPop(false),280); onClick(); };
+  return (
+    <div onClick={handle} title={label} style={{
+      minWidth:44, height:44, borderRadius:10,
+      background: filled ? color : C.faint,
+      border:`2px solid ${filled ? color : C.border}`,
+      display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer",
+      transform: pop?"scale(1.3)":"scale(1)",
+      transition:"transform 0.15s cubic-bezier(.36,1.8,.5,1), background 0.15s",
+      fontSize: filled?16:10, fontWeight:700,
+      color: filled?"#fff":C.muted,
+      userSelect:"none", flexShrink:0, padding:"2px 4px", textAlign:"center", lineHeight:1.2,
+    }}>
+      {filled?"✦":label}
     </div>
   );
 }
@@ -92,10 +101,10 @@ function CardShell({ card, children, onDelete, accent }) {
         <span style={{ fontWeight:700, color:C.text, fontSize:15, flex:1 }}>{card.name}</span>
         <span style={{ fontSize:10, padding:"2px 8px", borderRadius:99, background:t.light, color:accent, fontWeight:600 }}>{t.label}</span>
         {!confirm
-          ? <button onClick={() => setConfirm(true)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+          ? <button onClick={()=>setConfirm(true)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
           : <span style={{ fontSize:11, display:"flex", gap:4 }}>
               <button onClick={onDelete} style={{ background:"#ffe4e4", color:"#e05252", border:"none", borderRadius:6, padding:"2px 7px", cursor:"pointer" }}>削除</button>
-              <button onClick={() => setConfirm(false)} style={{ background:C.faint, color:C.muted, border:"none", borderRadius:6, padding:"2px 7px", cursor:"pointer" }}>戻る</button>
+              <button onClick={()=>setConfirm(false)} style={{ background:C.faint, color:C.muted, border:"none", borderRadius:6, padding:"2px 7px", cursor:"pointer" }}>戻る</button>
             </span>
         }
       </div>
@@ -106,55 +115,50 @@ function CardShell({ card, children, onDelete, accent }) {
 
 // ─── Habit card ────────────────────────────────────────────────────────────────
 function HabitCard({ card, onUpdate, onDelete }) {
-  const { y, m } = today();
+  const { y, m } = todayObj();
   const key = `${y}-${m}`;
-  const months = card.months || {};
-  const cur = months[key] || { checked: [] };
-  const goal = card.goal || 10;
-  const slots = Math.max(getDaysInMonth(y, m), cur.checked.length);
+  const months = card.months||{};
+  const cur = months[key]||{ checked:[] };
+  const goal = card.goal||10;
+  const slots = Math.max(getDaysInMonth(y,m), cur.checked.length);
   const ac = TYPES.habit.color;
-
   function toggle(i) {
-    const arr = [...(cur.checked)];
-    arr[i] = arr[i] ? 0 : 1;
-    while (arr.length && !arr[arr.length - 1]) arr.pop();
-    onUpdate({ ...card, months: { ...months, [key]: { checked: arr } } });
+    const arr=[...(cur.checked)]; arr[i]=arr[i]?0:1;
+    while(arr.length&&!arr[arr.length-1]) arr.pop();
+    onUpdate({ ...card, months:{ ...months, [key]:{ checked:arr } } });
   }
-
-  const done = cur.checked.filter(Boolean).length;
-  const pct  = Math.min(100, Math.round(done / goal * 100));
-  const pastKeys = Object.keys(months).filter(k => k !== key).sort().reverse().slice(0, 3);
-
+  const done=cur.checked.filter(Boolean).length;
+  const pct=Math.min(100,Math.round(done/goal*100));
+  const pastKeys=Object.keys(months).filter(k=>k!==key).sort().reverse().slice(0,3);
   return (
     <CardShell card={card} onDelete={onDelete} accent={ac}>
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
         <span style={{ color:C.muted, fontSize:12 }}>{y}年 {MONTHS_JP[m]} ／ 目標 {goal}回</span>
-        <span style={{ color:ac, fontWeight:700, fontSize:13 }}>{done} / {goal} 回 {done >= goal ? "🎉" : ""}</span>
+        <span style={{ color:ac, fontWeight:700, fontSize:13 }}>{done}/{goal}回 {done>=goal?"🎉":""}</span>
       </div>
       <div style={{ height:4, background:C.faint, borderRadius:2, marginBottom:10 }}>
         <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:2, transition:"width 0.3s" }} />
       </div>
       <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-        {Array.from({ length: slots }, (_, i) => (
-          <Stamp key={i} filled={!!cur.checked[i]} bonus={i >= goal} color={ac} onClick={() => toggle(i)} />
+        {Array.from({length:slots},(_,i)=>(
+          <Stamp key={i} filled={!!cur.checked[i]} bonus={i>=goal} color={ac} onClick={()=>toggle(i)} />
         ))}
-        <div onClick={() => toggle(slots)} style={{
+        <div onClick={()=>toggle(slots)} style={{
           width:34, height:34, borderRadius:"50%", border:`2px dashed ${C.border}`,
           display:"flex", alignItems:"center", justifyContent:"center",
           cursor:"pointer", color:C.muted, fontSize:18, flexShrink:0,
         }}>+</div>
       </div>
-      {pastKeys.length > 0 && (
+      {pastKeys.length>0 && (
         <div style={{ marginTop:10, borderTop:`1px solid ${C.border}`, paddingTop:8 }}>
           <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>過去の記録</div>
-          {pastKeys.map(k => {
-            const [py, pm] = k.split("-").map(Number);
-            const d = (months[k].checked || []).filter(Boolean).length;
-            const g = card.goal || 10;
+          {pastKeys.map(k=>{
+            const [py,pm]=k.split("-").map(Number);
+            const d=(months[k].checked||[]).filter(Boolean).length, g=card.goal||10;
             return (
               <div key={k} style={{ fontSize:11, display:"flex", justifyContent:"space-between", color:C.muted }}>
                 <span>{py}年 {MONTHS_JP[pm]}</span>
-                <span style={{ color: d >= g ? ac : C.muted }}>{d}/{g}回{d >= g ? " ✦" : ""}</span>
+                <span style={{ color:d>=g?ac:C.muted }}>{d}/{g}回{d>=g?" ✦":""}</span>
               </div>
             );
           })}
@@ -166,71 +170,307 @@ function HabitCard({ card, onUpdate, onDelete }) {
 
 // ─── Deadline card ─────────────────────────────────────────────────────────────
 function DeadlineCard({ card, onUpdate, onDelete }) {
-  const total = card.total || 10;
-  const done  = card.done  || 0;
-  const pct   = Math.round(done / total * 100);
-  const ac    = TYPES.deadline.color;
-  const deadlineStr = card.deadline ? new Date(card.deadline).toLocaleDateString("ja-JP") : "—";
-  const daysLeft = card.deadline ? Math.ceil((new Date(card.deadline) - new Date()) / 86400000) : null;
-
-  function toggle(i) { onUpdate({ ...card, done: i < done ? i : i + 1 }); }
-
+  const total=card.total||10, done=card.done||0;
+  const pct=Math.round(done/total*100), ac=TYPES.deadline.color;
+  const deadlineStr=card.deadline?new Date(card.deadline).toLocaleDateString("ja-JP"):"—";
+  const daysLeft=card.deadline?Math.ceil((new Date(card.deadline)-new Date())/86400000):null;
+  function toggle(i){ onUpdate({...card, done:i<done?i:i+1}); }
   return (
     <CardShell card={card} onDelete={onDelete} accent={ac}>
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
         <span style={{ color:C.muted, fontSize:12 }}>期限: {deadlineStr}</span>
-        <span style={{ color: daysLeft != null && daysLeft < 7 ? "#e05252" : C.muted, fontSize:12 }}>
-          {daysLeft != null ? (daysLeft >= 0 ? `残${daysLeft}日` : "⚠ 期限超過") : ""}
+        <span style={{ color:daysLeft!=null&&daysLeft<7?"#e05252":C.muted, fontSize:12 }}>
+          {daysLeft!=null?(daysLeft>=0?`残${daysLeft}日`:"⚠ 期限超過"):""}
         </span>
       </div>
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
         <span style={{ color:ac, fontWeight:700 }}>{pct}%</span>
-        <span style={{ color:C.muted, fontSize:12 }}>{done} / {total}</span>
+        <span style={{ color:C.muted, fontSize:12 }}>{done}/{total}</span>
       </div>
       <div style={{ height:5, background:C.faint, borderRadius:3, marginBottom:10 }}>
         <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:3, transition:"width 0.3s" }} />
       </div>
       <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-        {Array.from({ length: total }, (_, i) => (
-          <Stamp key={i} filled={i < done} color={ac} onClick={() => toggle(i)} />
+        {Array.from({length:total},(_,i)=>(
+          <Stamp key={i} filled={i<done} color={ac} onClick={()=>toggle(i)} />
         ))}
       </div>
-      {done >= total && <div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 完了！</div>}
+      {done>=total&&<div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 完了！</div>}
     </CardShell>
   );
 }
 
 // ─── Consume card ──────────────────────────────────────────────────────────────
 function ConsumeCard({ card, onUpdate, onDelete }) {
-  const total = card.total || 12;
-  const done  = card.done  || 0;
-  const pct   = Math.round(done / total * 100);
-  const ac    = TYPES.consume.color;
-
-  function toggle(i) { onUpdate({ ...card, done: i < done ? i : i + 1 }); }
-
+  const total=card.total||12, done=card.done||0;
+  const pct=Math.round(done/total*100), ac=TYPES.consume.color;
+  function toggle(i){ onUpdate({...card, done:i<done?i:i+1}); }
   return (
     <CardShell card={card} onDelete={onDelete} accent={ac}>
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-        <span style={{ color:ac, fontWeight:700 }}>{done} / {total} 話</span>
+        <span style={{ color:ac, fontWeight:700 }}>{done}/{total}話</span>
         <span style={{ color:C.muted, fontSize:12 }}>{pct}%</span>
       </div>
       <div style={{ height:4, background:C.faint, borderRadius:2, marginBottom:10 }}>
         <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:2, transition:"width 0.3s" }} />
       </div>
       <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-        {Array.from({ length: total }, (_, i) => (
-          <Stamp key={i} filled={i < done} color={ac} onClick={() => toggle(i)} />
+        {Array.from({length:total},(_,i)=>(
+          <Stamp key={i} filled={i<done} color={ac} onClick={()=>toggle(i)} />
         ))}
       </div>
-      {done >= total && <div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 全話視聴完了！</div>}
+      {done>=total&&<div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 全話視聴完了！</div>}
+    </CardShell>
+  );
+}
+
+// ─── Chapters card ─────────────────────────────────────────────────────────────
+function ChaptersCard({ card, onUpdate, onDelete }) {
+  const ac=TYPES.chapters.color;
+  const items=card.items||[];
+  const doneCount=items.filter(it=>it.done).length, total=items.length;
+  const pct=total>0?Math.round(doneCount/total*100):0;
+  const deadlineStr=card.deadline?new Date(card.deadline).toLocaleDateString("ja-JP"):"—";
+  const daysLeft=card.deadline?Math.ceil((new Date(card.deadline)-new Date())/86400000):null;
+  const [adding,setAdding]=useState(false);
+  const [newLabel,setNewLabel]=useState("");
+  function toggleItem(i){ onUpdate({...card, items:items.map((it,idx)=>idx===i?{...it,done:!it.done}:it)}); }
+  function addItem(){
+    if(!newLabel.trim()) return;
+    const labels=newLabel.split(/[,、，]/).map(s=>s.trim()).filter(Boolean);
+    onUpdate({...card, items:[...items,...labels.map(label=>({label,done:false}))]});
+    setNewLabel("");
+  }
+  return (
+    <CardShell card={card} onDelete={onDelete} accent={ac}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+        <span style={{ color:C.muted, fontSize:12 }}>期限: {deadlineStr}</span>
+        <span style={{ color:daysLeft!=null&&daysLeft<7?"#e05252":C.muted, fontSize:12 }}>
+          {daysLeft!=null?(daysLeft>=0?`残${daysLeft}日`:"⚠ 期限超過"):""}
+        </span>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+        <span style={{ color:ac, fontWeight:700 }}>{pct}%</span>
+        <span style={{ color:C.muted, fontSize:12 }}>{doneCount}/{total}</span>
+      </div>
+      <div style={{ height:5, background:C.faint, borderRadius:3, marginBottom:12 }}>
+        <div style={{ width:pct+"%", height:"100%", background:ac, borderRadius:3, transition:"width 0.3s" }} />
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:7 }}>
+        {items.map((it,i)=>(
+          <ChapterStamp key={i} label={it.label} filled={it.done} color={ac} onClick={()=>toggleItem(i)} />
+        ))}
+      </div>
+      <div style={{ marginTop:12 }}>
+        {!adding
+          ? <button onClick={()=>setAdding(true)} style={{
+              fontSize:11, color:ac, background:TYPES.chapters.light,
+              border:`1px solid ${ac}44`, borderRadius:8, padding:"5px 12px", cursor:"pointer",
+            }}>＋ 項目を追加</button>
+          : <div style={{ display:"flex", gap:6 }}>
+              <input autoFocus value={newLabel} onChange={e=>setNewLabel(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")addItem();if(e.key==="Escape")setAdding(false);}}
+                placeholder="1-1, 1-2, 第2章（カンマ区切りで複数）"
+                style={{ flex:1, background:C.faint, border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"6px 10px", fontSize:12 }}
+              />
+              <button onClick={addItem} style={{ background:ac, color:"#fff", border:"none", borderRadius:8, padding:"6px 12px", cursor:"pointer", fontSize:12, fontWeight:700 }}>追加</button>
+              <button onClick={()=>setAdding(false)} style={{ background:C.faint, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:12 }}>✕</button>
+            </div>
+        }
+      </div>
+      {doneCount>=total&&total>0&&<div style={{ marginTop:8, color:ac, fontSize:13, textAlign:"center" }}>🎉 完了！</div>}
+    </CardShell>
+  );
+}
+
+// ─── Routine card ──────────────────────────────────────────────────────────────
+// データ構造:
+//   card.taskNames: string[]  — 項目名のリスト（順序固定）
+//   card.log: { "YYYY-MM-DD": { [taskName]: bool } }  — 日付ごとのチェック状態
+function RoutineCard({ card, onUpdate, onDelete }) {
+  const ac = TYPES.routine.color;
+  const tk = todayKey();
+  const { y, m } = todayObj();
+  const taskNames = card.taskNames || [];
+  const log = card.log || {};
+  const todayLog = log[tk] || {};
+
+  // 今日のチェック済み数
+  const todayDone = taskNames.filter(n => todayLog[n]).length;
+  const allDone = taskNames.length > 0 && todayDone === taskNames.length;
+
+  // 今月の日付リスト（今日まで）
+  const daysInMonth = getDaysInMonth(y, m);
+  const todayD = todayObj().d;
+  const monthDays = Array.from({length: todayD}, (_, i) => {
+    const day = i + 1;
+    const key = `${y}-${String(m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const dayLog = log[key] || {};
+    const done = taskNames.filter(n => dayLog[n]).length;
+    const total = taskNames.length;
+    const dow = new Date(y, m, day).getDay();
+    return { day, key, done, total, dow };
+  });
+
+  const [addingTask, setAddingTask] = useState(false);
+  const [newTask, setNewTask] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+
+  function toggleTask(name) {
+    const updated = { ...todayLog, [name]: !todayLog[name] };
+    onUpdate({ ...card, log: { ...log, [tk]: updated } });
+  }
+  function addTask() {
+    if (!newTask.trim()) return;
+    const names = newTask.split(/[,、，]/).map(s=>s.trim()).filter(Boolean);
+    const next = [...new Set([...taskNames, ...names])];
+    onUpdate({ ...card, taskNames: next });
+    setNewTask(""); setAddingTask(false);
+  }
+  function removeTask(name) {
+    onUpdate({ ...card, taskNames: taskNames.filter(n=>n!==name) });
+  }
+
+  return (
+    <CardShell card={card} onDelete={onDelete} accent={ac}>
+      {/* 今日のチェック */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        <span style={{ color:C.muted, fontSize:12 }}>
+          {y}年{MONTHS_JP[m]}{todayObj().d}日（{DAYS_JP[new Date(y,m,todayObj().d).getDay()]}）
+        </span>
+        <span style={{ color:ac, fontWeight:700, fontSize:13 }}>
+          {todayDone}/{taskNames.length} {allDone?"🎉":""}
+        </span>
+      </div>
+
+      {/* 項目チェックリスト */}
+      {taskNames.length === 0
+        ? <div style={{ color:C.muted, fontSize:12, padding:"8px 0" }}>項目を追加してください</div>
+        : <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
+            {taskNames.map(name => {
+              const checked = !!todayLog[name];
+              return (
+                <div key={name} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div onClick={()=>toggleTask(name)} style={{
+                    width:28, height:28, borderRadius:8, flexShrink:0, cursor:"pointer",
+                    background: checked ? ac : C.faint,
+                    border:`2px solid ${checked ? ac : C.border}`,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:14, color:"#fff",
+                    transition:"background 0.15s",
+                  }}>
+                    {checked?"✦":""}
+                  </div>
+                  <span style={{
+                    flex:1, fontSize:14, color: checked ? C.muted : C.text,
+                    textDecoration: checked ? "line-through" : "none",
+                    transition:"color 0.15s",
+                  }}>{name}</span>
+                  {editMode &&
+                    <button onClick={()=>removeTask(name)} style={{
+                      background:"#ffe4e4", color:"#e05252", border:"none",
+                      borderRadius:6, padding:"2px 7px", cursor:"pointer", fontSize:11,
+                    }}>削除</button>
+                  }
+                </div>
+              );
+            })}
+          </div>
+      }
+
+      {/* 追加・編集ボタン */}
+      <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
+        {!addingTask
+          ? <button onClick={()=>setAddingTask(true)} style={{
+              fontSize:11, color:ac, background:TYPES.routine.light,
+              border:`1px solid ${ac}44`, borderRadius:8, padding:"4px 10px", cursor:"pointer",
+            }}>＋ 項目を追加</button>
+          : <div style={{ display:"flex", gap:6, width:"100%" }}>
+              <input autoFocus value={newTask} onChange={e=>setNewTask(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter")addTask();if(e.key==="Escape")setAddingTask(false);}}
+                placeholder="歯磨き, お風呂（カンマ区切りで複数）"
+                style={{ flex:1, background:C.faint, border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"6px 10px", fontSize:12 }}
+              />
+              <button onClick={addTask} style={{ background:ac, color:"#fff", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:12, fontWeight:700 }}>追加</button>
+              <button onClick={()=>setAddingTask(false)} style={{ background:C.faint, color:C.muted, border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 8px", cursor:"pointer", fontSize:12 }}>✕</button>
+            </div>
+        }
+        {!addingTask &&
+          <button onClick={()=>setEditMode(v=>!v)} style={{
+            fontSize:11, color:editMode?"#e05252":C.muted,
+            background: editMode?"#ffe4e4":C.faint,
+            border:`1px solid ${editMode?"#e0525244":C.border}`, borderRadius:8, padding:"4px 10px", cursor:"pointer",
+          }}>{editMode?"編集終了":"項目を削除"}</button>
+        }
+      </div>
+
+      {/* 月間カレンダー履歴 */}
+      <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:8 }}>
+        <button onClick={()=>setShowHistory(v=>!v)} style={{
+          background:"none", border:"none", color:C.muted, fontSize:11, cursor:"pointer", padding:0,
+        }}>{showHistory?"▲ 今月の履歴を閉じる":"▼ 今月の履歴を見る"}</button>
+        {showHistory && (
+          <div style={{ marginTop:8 }}>
+            {/* 曜日ヘッダー */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2, marginBottom:4 }}>
+              {DAYS_JP.map(d=>(
+                <div key={d} style={{ textAlign:"center", fontSize:9, color:C.muted, fontWeight:600 }}>{d}</div>
+              ))}
+            </div>
+            {/* 日付グリッド */}
+            {(() => {
+              const firstDow = new Date(y, m, 1).getDay();
+              const cells = [...Array(firstDow).fill(null), ...monthDays];
+              // 今日以降のグレーアウト用
+              const futureDays = Array.from({length: daysInMonth - todayD}, (_, i) => ({
+                day: todayD + i + 1, future: true,
+                dow: new Date(y, m, todayD + i + 1).getDay(),
+              }));
+              const allCells = [...cells, ...futureDays];
+              return (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
+                  {allCells.map((cell, i) => {
+                    if (!cell) return <div key={i} />;
+                    if (cell.future) return (
+                      <div key={i} style={{
+                        aspectRatio:"1", borderRadius:6, background:C.faint,
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        fontSize:9, color:C.border,
+                      }}>{cell.day}</div>
+                    );
+                    const pct = cell.total > 0 ? cell.done / cell.total : 0;
+                    const isToday = cell.day === todayObj().d;
+                    const bg = cell.total === 0 ? C.faint
+                      : pct === 1 ? ac
+                      : pct > 0 ? ac+"55"
+                      : C.faint;
+                    return (
+                      <div key={i} title={`${cell.day}日: ${cell.done}/${cell.total}`} style={{
+                        aspectRatio:"1", borderRadius:6, background:bg,
+                        border: isToday ? `2px solid ${ac}` : "2px solid transparent",
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        fontSize:9, fontWeight: isToday?700:400,
+                        color: pct===1?"#fff":C.muted,
+                      }}>{cell.day}</div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            <div style={{ display:"flex", gap:10, marginTop:6, fontSize:10, color:C.muted }}>
+              <span>🟢 全完了</span><span style={{ color:ac+"88" }}>▪ 一部</span><span>□ 未チェック</span>
+            </div>
+          </div>
+        )}
+      </div>
     </CardShell>
   );
 }
 
 // ─── New card form ─────────────────────────────────────────────────────────────
 function NewCardForm({ onAdd, onClose }) {
-  const [type, setType] = useState("habit");
+  const [type, setType] = useState("routine");
   const [name, setName] = useState("");
   const [goal, setGoal] = useState(10);
   const [total, setTotal] = useState(44);
@@ -238,48 +478,52 @@ function NewCardForm({ onAdd, onClose }) {
 
   function submit() {
     if (!name.trim()) return;
-    const base = { id: uid(), type, name: name.trim(), createdAt: Date.now() };
-    if (type === "habit") onAdd({ ...base, goal: Number(goal), months: {} });
-    else if (type === "deadline") onAdd({ ...base, total: Number(total), done: 0, deadline });
-    else onAdd({ ...base, total: Number(total), done: 0 });
+    const base = { id:uid(), type, name:name.trim(), createdAt:Date.now() };
+    if (type==="habit")    onAdd({...base, goal:Number(goal), months:{}});
+    else if (type==="deadline") onAdd({...base, total:Number(total), done:0, deadline});
+    else if (type==="chapters") onAdd({...base, items:[], deadline});
+    else if (type==="routine")  onAdd({...base, taskNames:[], log:{}});
+    else onAdd({...base, total:Number(total), done:0});
     onClose();
   }
 
-  const inp = {
-    background:C.faint, border:`1px solid ${C.border}`, borderRadius:8,
-    color:C.text, padding:"7px 10px", fontSize:13, width:"100%",
-  };
+  const inp = { background:C.faint, border:`1px solid ${C.border}`, borderRadius:8, color:C.text, padding:"7px 10px", fontSize:13, width:"100%" };
 
   return (
     <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"18px 16px", boxShadow:"0 2px 8px #0000000a" }}>
       <div style={{ fontWeight:700, color:C.text, marginBottom:12 }}>新しいカードを追加</div>
-      <div style={{ display:"flex", gap:6, marginBottom:12 }}>
-        {Object.entries(TYPES).map(([k, v]) => (
-          <button key={k} onClick={() => setType(k)} style={{
-            flex:1, padding:"7px 4px", borderRadius:8, fontSize:11, fontWeight:600,
-            border:`1.5px solid ${type === k ? v.color : C.border}`,
-            background: type === k ? v.light : C.faint,
-            color: type === k ? v.color : C.muted, cursor:"pointer",
+      <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
+        {Object.entries(TYPES).map(([k,v])=>(
+          <button key={k} onClick={()=>setType(k)} style={{
+            padding:"7px 10px", borderRadius:8, fontSize:11, fontWeight:600,
+            border:`1.5px solid ${type===k?v.color:C.border}`,
+            background:type===k?v.light:C.faint,
+            color:type===k?v.color:C.muted, cursor:"pointer",
           }}>{v.emoji} {v.label}</button>
         ))}
       </div>
-      <input style={{ ...inp, marginBottom:10 }} placeholder="カード名（例：英語単語）" value={name} onChange={e => setName(e.target.value)} />
-      {type === "habit" && (
+      <input style={{...inp, marginBottom:10}} placeholder="カード名（例：朝のルーティン）" value={name} onChange={e=>setName(e.target.value)} />
+      {type==="habit" && (
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
           <label style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>月目標回数</label>
-          <input type="number" min={1} max={31} style={inp} value={goal} onChange={e => setGoal(e.target.value)} />
+          <input type="number" min={1} max={31} style={inp} value={goal} onChange={e=>setGoal(e.target.value)} />
         </div>
       )}
-      {(type === "deadline" || type === "consume") && (
+      {(type==="deadline"||type==="consume") && (
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
           <label style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>総数</label>
-          <input type="number" min={1} style={inp} value={total} onChange={e => setTotal(e.target.value)} />
+          <input type="number" min={1} style={inp} value={total} onChange={e=>setTotal(e.target.value)} />
         </div>
       )}
-      {type === "deadline" && (
+      {(type==="deadline"||type==="chapters") && (
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
           <label style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>期限</label>
-          <input type="date" style={inp} value={deadline} onChange={e => setDeadline(e.target.value)} />
+          <input type="date" style={inp} value={deadline} onChange={e=>setDeadline(e.target.value)} />
+        </div>
+      )}
+      {(type==="chapters"||type==="routine") && (
+        <div style={{ fontSize:11, color:C.muted, marginBottom:10, padding:"8px 10px", background:C.faint, borderRadius:8 }}>
+          📝 カード作成後に項目を追加できます
         </div>
       )}
       <div style={{ display:"flex", gap:8, marginTop:4 }}>
@@ -301,19 +545,20 @@ function Tabs({ active, onChange }) {
   const opts = [
     { k:"all",      label:"すべて" },
     { k:"active",   label:"進行中" },
-    { k:"done",     label:"完了済み" },
+    { k:"routine",  label:TYPES.routine.emoji  + " ルーティン" },
     { k:"habit",    label:TYPES.habit.emoji    + " 習慣" },
+    { k:"chapters", label:TYPES.chapters.emoji + " 章立て" },
     { k:"deadline", label:TYPES.deadline.emoji + " 期限" },
     { k:"consume",  label:TYPES.consume.emoji  + " 消化" },
   ];
   return (
     <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
-      {opts.map(o => (
-        <button key={o.k} onClick={() => onChange(o.k)} style={{
+      {opts.map(o=>(
+        <button key={o.k} onClick={()=>onChange(o.k)} style={{
           padding:"5px 12px", borderRadius:99, fontSize:11, fontWeight:600,
-          border:`1.5px solid ${active === o.k ? (TYPES[o.k]?.color || "#7b8ff7") : C.border}`,
-          background: active === o.k ? (TYPES[o.k]?.light || "#eef0ff") : C.surface,
-          color: active === o.k ? (TYPES[o.k]?.color || "#7b8ff7") : C.muted,
+          border:`1.5px solid ${active===o.k?(TYPES[o.k]?.color||"#7b8ff7"):C.border}`,
+          background:active===o.k?(TYPES[o.k]?.light||"#eef0ff"):C.surface,
+          color:active===o.k?(TYPES[o.k]?.color||"#7b8ff7"):C.muted,
           cursor:"pointer",
         }}>{o.label}</button>
       ))}
@@ -321,30 +566,33 @@ function Tabs({ active, onChange }) {
   );
 }
 
-const isCardDone = card => card.type !== "habit" && (card.done || 0) >= (card.total || 1);
+const isCardDone = card => {
+  if (card.type==="habit"||card.type==="routine") return false;
+  if (card.type==="chapters") return card.items?.length>0&&card.items.every(it=>it.done);
+  return (card.done||0)>=(card.total||1);
+};
 
 // ─── App ───────────────────────────────────────────────────────────────────────
 function App() {
-  const [cards, setCards] = useState(() => load());
+  const [cards, setCards] = useState(()=>load());
   const [adding, setAdding] = useState(false);
   const [tab, setTab] = useState("all");
 
-  useEffect(() => { save(cards); }, [cards]);
+  useEffect(()=>{ save(cards); }, [cards]);
 
-  const addCard    = useCallback(c => setCards(prev => [c, ...prev]), []);
-  const updateCard = useCallback(c => setCards(prev => prev.map(x => x.id === c.id ? c : x)), []);
-  const deleteCard = useCallback(id => setCards(prev => prev.filter(x => x.id !== id)), []);
+  const addCard    = useCallback(c=>setCards(prev=>[c,...prev]),[]);
+  const updateCard = useCallback(c=>setCards(prev=>prev.map(x=>x.id===c.id?c:x)),[]);
+  const deleteCard = useCallback(id=>setCards(prev=>prev.filter(x=>x.id!==id)),[]);
 
-  const filtered = cards.filter(c => {
-    if (tab === "active")   return !isCardDone(c);
-    if (tab === "done")     return  isCardDone(c);
-    if (["habit","deadline","consume"].includes(tab)) return c.type === tab;
+  const filtered = cards.filter(c=>{
+    if (tab==="active") return !isCardDone(c);
+    if (["habit","deadline","consume","chapters","routine"].includes(tab)) return c.type===tab;
     return true;
   });
-  const sorted = [...filtered].sort((a, b) => {
-    const da = isCardDone(a), db = isCardDone(b);
-    if (da !== db) return da ? 1 : -1;
-    return (b.createdAt || 0) - (a.createdAt || 0);
+  const sorted = [...filtered].sort((a,b)=>{
+    const da=isCardDone(a), db=isCardDone(b);
+    if (da!==db) return da?1:-1;
+    return (b.createdAt||0)-(a.createdAt||0);
   });
 
   return (
@@ -357,33 +605,33 @@ function App() {
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:800, letterSpacing:"-0.5px", color:C.text }}>✦ スタンプカード</div>
-          <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>
-            {cards.filter(c => !isCardDone(c)).length} 件進行中 · 全{cards.length}件
-          </div>
+          <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{cards.length}件</div>
         </div>
-        <button onClick={() => setAdding(v => !v)} style={{
-          background: adding ? C.faint : "#7b8ff7",
-          border:`1.5px solid ${adding ? C.border : "#7b8ff7"}`,
-          borderRadius:99, color: adding ? C.muted : "#fff",
+        <button onClick={()=>setAdding(v=>!v)} style={{
+          background:adding?C.faint:"#7b8ff7",
+          border:`1.5px solid ${adding?C.border:"#7b8ff7"}`,
+          borderRadius:99, color:adding?C.muted:"#fff",
           fontWeight:700, fontSize:22, width:42, height:42, cursor:"pointer",
           display:"flex", alignItems:"center", justifyContent:"center",
-        }}>{adding ? "×" : "+"}</button>
+        }}>{adding?"×":"+"}</button>
       </div>
 
-      {adding && <div style={{ marginBottom:14 }}><NewCardForm onAdd={addCard} onClose={() => setAdding(false)} /></div>}
+      {adding&&<div style={{ marginBottom:14 }}><NewCardForm onAdd={addCard} onClose={()=>setAdding(false)} /></div>}
 
       <Tabs active={tab} onChange={setTab} />
 
       <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-        {sorted.length === 0 && (
+        {sorted.length===0&&(
           <div style={{ textAlign:"center", color:C.muted, padding:"40px 0", fontSize:13 }}>
-            {tab === "all" ? "＋ ボタンでカードを追加してください" : "該当するカードがありません"}
+            {tab==="all"?"＋ ボタンでカードを追加してください":"該当するカードがありません"}
           </div>
         )}
-        {sorted.map(card => {
-          const props = { key:card.id, card, onUpdate:updateCard, onDelete:() => deleteCard(card.id) };
-          if (card.type === "habit")    return <HabitCard    {...props} />;
-          if (card.type === "deadline") return <DeadlineCard {...props} />;
+        {sorted.map(card=>{
+          const props={key:card.id, card, onUpdate:updateCard, onDelete:()=>deleteCard(card.id)};
+          if (card.type==="habit")    return <HabitCard    {...props} />;
+          if (card.type==="deadline") return <DeadlineCard {...props} />;
+          if (card.type==="chapters") return <ChaptersCard {...props} />;
+          if (card.type==="routine")  return <RoutineCard  {...props} />;
           return <ConsumeCard {...props} />;
         })}
       </div>
